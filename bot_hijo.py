@@ -1,46 +1,43 @@
 import os
-import requests
-import subprocess
+import json
+import httpx
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-# --- CONFIGURACIÓN ---
-GEMINI_API_KEY = "AIzaSyC8h_cKzZPAjk3gw4I9KOk9ZT_u4GDZAMk"
-TELEGRAM_TOKEN = "8688750839:AAFkQgo3Wq262lU6gmYjmHwm1TEvtOH96nc"
+# --- LEER VARIABLES DE RAILWAY ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# --- FUNCIÓN PARA SEPARAR VOCES ---
-async def separar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🎧 Recibido. Iniciando extracción de voces... esto puede tardar un poco, Jefe.")
+async def procesar_todo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto_usuario = update.message.text
+    await update.message.reply_text("🎧 Sisi DJ en la nube: Procesando tu beat...")
+
+    # Forzamos el modo generador de audio
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
-    # 1. Descargar el archivo que envió el usuario
-    file = await context.bot.get_file(update.message.audio.file_id)
-    input_path = "pista_original.mp3"
-    await file.download_to_drive(input_path)
+    instruccion = (
+        f"Eres un productor de Trap Dark. Genera un ARCHIVO DE AUDIO (.mp3) "
+        f"de 15 segundos con este estilo: {texto_usuario}. "
+        f"Responde SOLO con el link de descarga directa o el objeto de audio nativo."
+    )
 
-    # 2. Comando de Spleeter (Separa en 2 pistas: vocals.wav y accompaniment.wav)
-    # Usamos subprocess para llamar al motor de audio del sistema
-    try:
-        subprocess.run(["spleeter", "separate", "-p", "spleeter:2stems", "-o", "output", input_path])
-        
-        # 3. Enviar los resultados de vuelta al usuario
-        vocals = "output/pista_original/vocals.wav"
-        pista = "output/pista_original/accompaniment.wav"
-        
-        await update.message.reply_audio(audio=open(vocals, 'rb'), caption="🎤 Aquí tiene solo la VOZ, Jefe.")
-        await update.message.reply_audio(audio=open(pista, 'rb'), caption="🎸 Aquí tiene la PISTA (Instrumental).")
-        
-    except Exception as e:
-        await update.message.reply_text(f"💥 Error en el procesador de audio: {e}")
+    payload = {
+        "contents": [{"parts": [{"text": instruccion}]}],
+        "safetySettings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}]
+    }
 
-# --- AGREGAR EL HANDLER AL ARRANQUE ---
+    async with httpx.AsyncClient(timeout=120.0) as client: # Tiempo extra por si el server está lento
+        try:
+            response = await client.post(url, json=payload)
+            data = response.json()
+            respuesta = data['candidates'][0]['content']['parts'][0]['text']
+            await update.message.reply_text(respuesta)
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ Error en el laboratorio: {e}")
+
 if __name__ == '__main__':
+    # Railway usa el worker del Procfile, pero esto asegura el arranque
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    
-    # Maneja mensajes de texto (Gemini)
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), responder_manual))
-    
-    # NUEVO: Maneja archivos de audio para separar pistas
-    app.add_handler(MessageHandler(filters.AUDIO, separar_audio))
-    
-    print("🚀 SISI DJ CON SEPARADOR DE PISTAS ACTIVO")
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), procesar_todo))
+    print("🚀 SISTEMA CRISTIAN ONLINE EN RAILWAY")
     app.run_polling()
